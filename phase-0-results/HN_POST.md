@@ -23,45 +23,45 @@
 
 MCP (Model Context Protocol) has crossed 10,000 published servers and 97M monthly SDK downloads. But how many actually work?
 
-I spent the last two days running a fresh `npx -y <package>` on 20 popular MCP servers — exactly what any developer does when they want to try one. Here's what I found:
+I spent a day running a fresh `npx -y <package>` on 20 popular MCP servers — exactly what any developer does when they want to try one. Here's what I found:
 
-**7 out of 20 worked. 13 failed.**
-
-The breakdown:
+**7 out of 20 worked. 13 failed. And the failures taught me more than the successes.**
 
 ```
-✅  filesystem     — 14 tools, works perfectly
+✅  filesystem     — 14 tools, works (1.1s startup)
 ✅  memory         — 9 tools, works
 ✅  sequential-thinking — 1 tool, works
 ✅  everything     — 13 tools, works  
-✅  mcp-fetch      — 1 tool, works (but takes 13 seconds to start)
+✅  mcp-fetch      — 1 tool, works (13s startup — is it loading or broken?)
 ✅  everything-search — 4 tools, works
 ✅  mcp-server-git — 28 tools, works
 
-❌  fetch          — official Anthropic server, no env needed. Just... hangs.
-❌  mcp-server-time — should work. Hangs silently.
-❌  mcp-sqlite     — needs only a file path. Hangs.
-❌  mcp-pandoc     — needs pandoc CLI, gives zero error. Hangs.
-❌  mcp-obsidian   — starts, initializes, but returns invalid inputSchema
-❌  brave-search   — needs API key, gives no error. Hangs.
-❌  puppeteer      — needs Chrome, gives no error. Hangs.
-❌  browserbase    — needs API key. Hangs.
-❌  postgres       — needs DB. Hangs.
-❌  redis          — needs Redis. Hangs.
-❌  weather        — unclear. Hangs.
-❌  sse-shim       — unclear. Hangs.
-❌  ticketmaster   — needs API key. Hangs.
+❌  server-fetch    — package doesn't exist on npm (official Anthropic repo!)
+❌  server-time     — package doesn't exist on npm
+❌  mcp-pandoc      — package doesn't exist on npm
+❌  mcp-sse-shim    — package doesn't exist on npm
+❌  mcp-redis       — package doesn't exist on npm
+❌  mcp-sqlite      — exists, starts, immediately crashes. Error: silent.
+❌  ticketmaster    — exists, starts, immediately crashes. Error: silent.
+❌  brave-search    — exits with error... but only in stderr. Client sees nothing.
+❌  mcp-obsidian    — starts, initializes, returns tools — but inputSchema.type="array" (spec requires "object")
+❌  puppeteer       — needs Chrome, no clear error
+❌  postgres        — needs DB, no clear error
+❌  browserbase     — doesn't exist on npm
+❌  weather         — exists but crashes immediately
 ```
 
-**The pattern:** Most failures are silent hangs. Not "missing BRAVE_API_KEY", not "pandoc not found". Just an unresponsive process with no output. You have no idea if it's still loading or broken forever.
+**Three failure modes, all bad:**
 
-The worst case was `mcp-obsidian`: it connects, responds to `initialize`, returns tool list — but the `inputSchema.type` is not "object", which violates the MCP spec and silently breaks any client trying to use it.
+**1. Package doesn't exist** — 5 packages are referenced in docs/GitHub/READMEs but were never published to npm. `npx -y` just hangs forever. No "not found" in the client. You wait, wondering.
+
+**2. Silent crashes** — `mcp-sqlite` starts, then dies. The MCP client reports "Connection closed". That's all. To find the real error you have to attach to the process stderr manually. `brave-search` actually has a good error message ("BRAVE_API_KEY required") — but it goes to stderr, which Cursor and Claude Desktop never show you.
+
+**3. Spec violations that pass all basic checks** — `mcp-obsidian` is the most insidious: it starts, responds to initialize, returns a tool list. But `inputSchema.type = "array"` instead of `"object"`. The MCP spec is clear. Any client calling this server gets a silent validation error.
 
 ---
 
-**Why this matters:**
-
-There's no `npm test` for MCP servers. No CI/CD. No standard way to validate a server before publishing it. Developers are shipping broken servers to 10K+ registry entries and users have no idea until they try.
+**There's no npm test for MCP.** No CI. No way to catch any of this before shipping to the registry.
 
 ---
 

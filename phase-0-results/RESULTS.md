@@ -3,6 +3,10 @@
 **Date:** 2026-03-01  
 **Method:** Fresh `npx -y <package>` — exactly what any developer does
 
+> **Important note after deeper investigation:** 5 of the 20 servers we initially picked
+> don't exist on npm at all. The package names are referenced in docs/GitHub repos,
+> but were never published. This is itself a finding — the discovery problem is broken.
+
 ---
 
 ## Raw Numbers
@@ -10,12 +14,13 @@
 | Metric | Result |
 |--------|--------|
 | Servers tested | 20 |
+| **Packages don't exist on npm** | **5 / 20** |
 | **Fully working** | **7 / 20 (35%)** |
-| **Broken** | **13 / 20 (65%)** |
-| Start successfully | 8 / 20 |
-| Respond to initialize | 8 / 20 |
-| list_tools works | 7 / 20 |
+| **Broken (exist but fail)** | **8 / 20 (40%)** |
+| Start but close immediately | 3 / 20 |
 | Invalid inputSchema | 1 / 20 |
+| Need external service (DB/Redis) | 2 / 20 |
+| Need API key (exit with error) | 2 / 20 |
 
 ---
 
@@ -46,46 +51,56 @@
 
 ---
 
-## Breakdown of Failures (13 servers)
+## Breakdown of Failures
 
-### Category 1: Should work but don't (no API key needed) — 5 servers
-- `@modelcontextprotocol/server-fetch` — Official Anthropic server, no env needed. Hangs.
-- `mcp-server-sqlite` — Needs only a file path. Hangs.
-- `mcp-pandoc` — Needs pandoc CLI, but gives **no error message**, just hangs.
-- `mcp-weather` — Hangs silently.
-- `mcp-server-time` — Official-adjacent, should work. Hangs.
+### Category 1: Package doesn't exist on npm — 5 servers ← NEW FINDING
+These are referenced in documentation/GitHub repos but were **never published to npm**.
+`npx -y` silently hangs waiting for download that will never complete.
 
-### Category 2: Need external service (DB, Redis) — 3 servers
-- `mcp-server-postgres` — Needs Postgres instance.
-- `mcp-server-redis` — Needs Redis instance.
-- `mcp-server-puppeteer` — Needs Chrome browser.
+- `@modelcontextprotocol/server-fetch` — Official Anthropic repo, not on npm
+- `@modelcontextprotocol/server-time` — Not on npm
+- `mcp-pandoc` — Not on npm
+- `@geffzhang/mcp-server-redis` — Not on npm
+- `mcp-sse-shim` — Not on npm
+- `@browserbasehq/mcp-browserbase` — Not on npm
 
-### Category 3: Need API key (but give no helpful error) — 3 servers
-- `mcp-server-brave-search` — Needs BRAVE_API_KEY. No error, just hangs.
-- `mcp-server-browserbase` — Needs API key.
-- `mcp-server-ticketmaster` — Needs API key.
+### Category 2: Starts then closes immediately — 3 servers
+These crash on startup. The MCP SDK reports "Connection closed" — no useful error in the client.
+But if you read stderr: one of them actually gives a good error, others crash silently.
+
+- `mcp-server-sqlite` — Crashes immediately. stderr: just `process terminated`. No reason given.
+- `@modelcontextprotocol/server-brave-search` — Exits with `Error: BRAVE_API_KEY environment variable is required` (stderr only — client never sees this)
+- `@delorenj/mcp-server-ticketmaster` — Exits silently
+
+### Category 3: Need external service — 2 servers
+Expected to fail, but still give no useful error message to the user.
+
+- `@modelcontextprotocol/server-postgres` — Needs Postgres DB running
+- `@modelcontextprotocol/server-puppeteer` — Needs Chrome
 
 ### Category 4: Invalid MCP spec — 1 server
-- `mcp-obsidian` — Passes initialize, but **inputSchema.type is not "object"**, violating MCP spec.
+- `mcp-obsidian` — Starts, initializes, returns tools — but `inputSchema.type = "array"` instead of `"object"`. Violates MCP spec. Breaks clients silently.
 
-### Category 5: Missing dependency (silent) — 1 server
-- `mcp-pandoc` — Requires `pandoc` CLI installed. Gives no error, just hangs.
+### Category 5: Unclear / unknown — 1 server
+- `mcp-weather` — Exits. Reason unknown without deeper investigation.
 
 ---
 
-## Key Findings
+## Key Findings (updated after deeper investigation)
 
-1. **65% of tested servers fail** for a developer who just runs `npx -y <package>`.
+1. **5 out of 20 package names we tried don't exist on npm** — referenced in docs/GitHub but never published. `npx -y` just hangs forever with no explanation. There is no way to know without trying.
 
-2. **Even official Anthropic servers fail**: `server-fetch` and `server-time` hang without any error message.
+2. **Of servers that DO exist, 8/15 (53%) fail** when you run them fresh.
 
-3. **Failures are silent**: Servers don't crash with a useful error. They just... hang. No "missing API key", no "pandoc not found". Just timeout.
+3. **The #1 failure mode: silent crash**. `mcp-server-sqlite` starts, then dies immediately. The MCP client sees "Connection closed". The developer sees nothing. There is no "here's what went wrong" message in the protocol.
 
-4. **The worst case**: `mcp-obsidian` starts, initializes, but returns tools with an invalid schema that breaks MCP clients silently.
+4. **`brave-search` actually gives a good error** — but only in `stderr`. Any tool that wraps the server (Cursor, Claude Desktop) never shows you this. You just see "server not available".
 
-5. **No way to know before using**: Every failure required me to debug manually. There is no `npm test` equivalent for MCP.
+5. **`mcp-obsidian` passes all basic checks but is silently broken**: valid startup, valid tools list, but `inputSchema.type = "array"` — the MCP spec requires "object". Any agent calling it gets an SDK validation error.
 
-6. **Startup times vary wildly**: from 1.1s (filesystem) to 12.9s (mcp-fetch). No standard.
+6. **Startup times vary 10x**: 1.1s to 13s. No standard. Users don't know if it's loading or broken.
+
+7. **The discovery problem is as bad as the quality problem**: no canonical npm naming, servers exist only on GitHub, no way to check if a package is published before trying.
 
 ---
 
